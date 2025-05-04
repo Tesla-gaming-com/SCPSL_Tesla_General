@@ -1,2 +1,1 @@
-# Tesla_Event_Collector
-AI plugin for SCP:SL
+# General plugin for tesla services
