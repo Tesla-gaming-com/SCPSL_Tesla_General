@@ -6,7 +6,12 @@ using Map = Exiled.API.Features.Map;
 namespace Tesla_General
 {
     /// <summary>
-    /// Выполняет команды, пришедшие от лямбды (KillPlayer, Broadcast, StartWarhead и т.д.).
+    /// RU: Выполняет команды (<see cref="GameAction"/>) от менеджер-эндпоинта/ИИ агента. Каждая команда обрабатывается в блоке switch.
+    ///     Можно добавить больше кейсов с максимальным количеством параметров и гибкой настройкой (например, изменить карту, запустить кастомное событие и т.д.).
+    ///     Важно добавить проверку на DoNotTrack, если команда взаимодействует с игроком, и при необходимости учитывать это.
+    /// EN: Executes (<see cref="GameAction"/>) commands from the manager-endpoint/AI agent. Each command is handled in a switch block.
+    ///     You can add more cases with maximum parameters and flexibility (e.g. alter the map, start a custom event, etc.).
+    ///     Also important to check DoNotTrack if your commands interact with the player and handle accordingly if needed.
     /// </summary>
     public static class TeslaCommandProcessor
     {

@@ -8,8 +8,6 @@ using Exiled.Events.EventArgs.Warhead;
 using Exiled.Events.EventArgs;
 using Exiled.Events.Handlers;
 using PlayerRoles;
-
-// Дополнительные using для PromptGenerator / TeslaApiClient
 using Tesla_General.Processing;
 using Tesla_General.Networking;
 using System.Collections.Generic;
@@ -17,31 +15,44 @@ using System.Collections.Generic;
 namespace Tesla_General
 {
     /// <summary>
-    /// Основной класс плагина «Tesla_General».
-    /// Собирает события, раз в 5 секунд отправляет их на лямбда-менеджер (если есть секретный ключ),
-    /// получает команды, выполняет их.
+    /// RU: Главный класс плагина. Подписывается на события Exiled, максимально детализированно логирует их через
+    ///     <see cref="EventCollector"/>, периодически формирует JSON (см. <see cref="PromptGenerator"/>) и отправляет
+    ///     на менеджер-эндпоинт (см. <see cref="TeslaApiClient"/>). Рекомендуется расширять двумя способами:
+    ///     1) Добавлять новые подписки на события в <c>OnEnabled</c> и соответствующие методы-обработчики;
+    ///     2) Углублять логику существующих обработчиков (доп. поля, условия).
+    ///     Также имеет смысл добавить события вроде разблокировки (unban), захвата изменений рангов, статистики, DNT-проверок (DoNotTrack) и т.д.
+    /// EN: Core plugin class. Subscribes to Exiled events, logs them in rich detail via <see cref="EventCollector"/>,
+    ///     periodically builds a JSON payload (<see cref="PromptGenerator"/>) and sends it to the manager-endpoint
+    ///     (<see cref="TeslaApiClient"/>). Recommended ways of extending:
+    ///     1) Add more event subscriptions in <c>OnEnabled</c> and their respective handlers;
+    ///     2) Enrich logic of existing handlers (extra fields, conditions).
+    ///     Also consider adding unban events, rank change captures, stats, DNT checks (DoNotTrack) etc.
     /// </summary>
     public class MainPlugin : Plugin<Config>
     {
         public static MainPlugin Singleton { get; private set; }
 
         public override string Name => "Tesla_General";
-        public override string Author => "YourName";
+        public override string Author => "Tesla-services";
         public override Version Version => new Version(1, 0, 0);
 
         private Timer dataSendTimer;
 
-        // Запоминаем время последнего спавна MTF и Chaos
         private static DateTime lastMtfSpawnTime = DateTime.MinValue;
         private static DateTime lastChaosSpawnTime = DateTime.MinValue;
 
-        // Время начала/конца раунда
         private static DateTime roundStartTime;
         private static DateTime? roundEndTime;
 
         public static DateTime RoundStartTime => roundStartTime;
         public static DateTime? RoundEndTime => roundEndTime;
 
+        /// <summary>
+        /// RU: Метод OnEnabled — здесь подписываемся на нужные события (Exiled). При необходимости обрабатывайте и другие события,
+        ///     такие как взаимодействие с дверями, консольные команды, SCP-события, и т.д., чтобы охватить максимум.
+        /// EN: OnEnabled method — we subscribe to Exiled events here. If needed, handle more events,
+        ///     e.g., door interactions, console commands, SCP-specific events, etc., to capture as many as possible.
+        /// </summary>
         public override void OnEnabled()
         {
             Singleton = this;
@@ -51,7 +62,8 @@ namespace Tesla_General
 
             EventCollector.AddSystemEvent("Plugin enabled");
 
-            // Запускаем таймер каждые 5 секунд
+            // RU: Запускаем таймер для отправки данных каждые 5 секунд. Можно сделать настраиваемым. 
+            // EN: Start a timer to send data every 5 seconds. Could be made configurable.
             dataSendTimer = new Timer(5000);
             dataSendTimer.Elapsed += OnDataSendTimerElapsed;
             dataSendTimer.AutoReset = true;
@@ -60,8 +72,8 @@ namespace Tesla_General
             if (Config.Debug)
                 Log.Info("[MainPlugin] Data sending timer started (5s).");
 
-            // Подписки на события
-            // -----------------------------------------------
+            // RU: Подписки на события игроков
+            // EN: Player event subscriptions
             Exiled.Events.Handlers.Player.Hurting += OnPlayerHurting;
             Exiled.Events.Handlers.Player.PickingUpItem += OnItemPickedUp;
             Exiled.Events.Handlers.Player.DroppingItem += OnItemDropped;
@@ -69,40 +81,57 @@ namespace Tesla_General
             Exiled.Events.Handlers.Player.Verified += OnPlayerVerified;
             Exiled.Events.Handlers.Player.Left += OnPlayerLeave;
 
+            // RU: Подписка на респавн команд
+            // EN: Respawn team subscription
             Exiled.Events.Handlers.Server.RespawningTeam += OnRespawningTeam;
+
+            // RU: Подписки на запуск/остановку вархеда
+            // EN: Warhead start/stop subscriptions
             Exiled.Events.Handlers.Warhead.Starting += OnWarheadStarting;
             Exiled.Events.Handlers.Warhead.Stopping += OnWarheadStopping;
+
+            // RU: Смена роли/спавн игрока
+            // EN: Role change / player spawn
             Exiled.Events.Handlers.Player.ChangingRole += OnRoleChange;
             Exiled.Events.Handlers.Player.Spawning += OnPlayerSpawning;
 
+            // RU: Начало/конец раунда, рестарт сервера
+            // EN: Round start/end, server restart
             Exiled.Events.Handlers.Server.WaitingForPlayers += OnWaitingForPlayers;
             Exiled.Events.Handlers.Server.RoundStarted += OnRoundStarted;
             Exiled.Events.Handlers.Server.RoundEnded += OnRoundEnded;
             Exiled.Events.Handlers.Server.RestartingRound += OnServerRestarting;
 
-            // Смерти (Dying)
+            // RU: События смерти
+            // EN: Death events
             Exiled.Events.Handlers.Player.Dying += OnTeamKillDeath;
             Exiled.Events.Handlers.Player.Dying += OnCuffKillDeath;
             Exiled.Events.Handlers.Player.Dying += OnNormalDeath;
             Exiled.Events.Handlers.Player.Dying += OnSuicide;
 
-            // Бан/Разбан/Кик/Мут/Размут
+            // RU: Модерационные события: бан, кик, мут, и т.д.
+            // EN: Moderation events: ban, kick, mute, etc.
             Exiled.Events.Handlers.Player.Banned += OnBanned;
             Exiled.Events.Handlers.Player.Kicking += OnKicking;
             Exiled.Events.Handlers.Player.IssuingMute += OnIssuingMute;
             Exiled.Events.Handlers.Player.RevokingMute += OnIssuingUnmute;
 
-            // Локальные репорты
+            // RU: Локальные репорты
+            // EN: Local reporting
             Exiled.Events.Handlers.Server.LocalReporting += OnLocalReporting;
 
-            // Наручники
+            // RU: События наручников (куф/анкуф)
+            // EN: Cuffing/uncuffing events
             Exiled.Events.Handlers.Player.Handcuffing += OnCuffing;
             Exiled.Events.Handlers.Player.RemovedHandcuffs += OnUncuffed;
 
-            // Анонсы хаоса и НТФ
+            // RU: Анонсы: хаос и мтф
+            // EN: Announcements: chaos & ntf
             Exiled.Events.Handlers.Map.AnnouncingChaosEntrance += OnChaosEnter;
             Exiled.Events.Handlers.Map.AnnouncingNtfEntrance += OnNtfEnter;
 
+            // RU: Админ-чат
+            // EN: Admin chat
             Exiled.Events.Handlers.Player.SendingAdminChatMessage += OnSendingAdminChatMessage;
 
             base.OnEnabled();
@@ -113,8 +142,8 @@ namespace Tesla_General
             dataSendTimer?.Stop();
             dataSendTimer?.Dispose();
 
-            // Отписки
-            // -----------------------------------------------
+            // RU: Отписки от всех тех же событий, чтобы корректно выгружаться.
+            // EN: Unsubscribe from the same events for proper unload.
             Exiled.Events.Handlers.Player.Hurting -= OnPlayerHurting;
             Exiled.Events.Handlers.Player.PickingUpItem -= OnItemPickedUp;
             Exiled.Events.Handlers.Player.DroppingItem -= OnItemDropped;
@@ -132,26 +161,21 @@ namespace Tesla_General
             Exiled.Events.Handlers.Server.RoundEnded -= OnRoundEnded;
             Exiled.Events.Handlers.Server.RestartingRound -= OnServerRestarting;
 
-            // Dying
             Exiled.Events.Handlers.Player.Dying -= OnTeamKillDeath;
             Exiled.Events.Handlers.Player.Dying -= OnCuffKillDeath;
             Exiled.Events.Handlers.Player.Dying -= OnNormalDeath;
             Exiled.Events.Handlers.Player.Dying -= OnSuicide;
 
-            // Бан/Разбан/Кик/Мут/Размут
             Exiled.Events.Handlers.Player.Banned -= OnBanned;
             Exiled.Events.Handlers.Player.Kicking -= OnKicking;
             Exiled.Events.Handlers.Player.IssuingMute -= OnIssuingMute;
             Exiled.Events.Handlers.Player.RevokingMute -= OnIssuingUnmute;
 
-            // Локальные репорты
             Exiled.Events.Handlers.Server.LocalReporting -= OnLocalReporting;
 
-            // Наручники
             Exiled.Events.Handlers.Player.Handcuffing -= OnCuffing;
             Exiled.Events.Handlers.Player.RemovedHandcuffs -= OnUncuffed;
 
-            // Хаос/НТФ анонсы
             Exiled.Events.Handlers.Map.AnnouncingChaosEntrance -= OnChaosEnter;
             Exiled.Events.Handlers.Map.AnnouncingNtfEntrance -= OnNtfEnter;
 
@@ -164,7 +188,6 @@ namespace Tesla_General
 
         private void OnDataSendTimerElapsed(object sender, ElapsedEventArgs e)
         {
-            // Если плагин выключен или нет секретного ключа — не отправляем
             if (!Config.IsEnabled || string.IsNullOrWhiteSpace(Config.SecretKey))
                 return;
 
@@ -175,7 +198,6 @@ namespace Tesla_General
                 return;
             }
 
-            // Подсчитываем время с последнего спавна
             TimeSpan? timeSinceLastMtf = null;
             if (lastMtfSpawnTime != DateTime.MinValue)
                 timeSinceLastMtf = DateTime.UtcNow - lastMtfSpawnTime;
@@ -184,7 +206,6 @@ namespace Tesla_General
             if (lastChaosSpawnTime != DateTime.MinValue)
                 timeSinceLastChaos = DateTime.UtcNow - lastChaosSpawnTime;
 
-            // Генерируем JSON
             var json = PromptGenerator.GenerateDataJson(timeSinceLastMtf, timeSinceLastChaos);
 
             if (!string.IsNullOrEmpty(json))
@@ -194,14 +215,11 @@ namespace Tesla_General
             }
         }
 
-        // -------------------- События --------------------
-
         private void OnPlayerHurting(Exiled.Events.EventArgs.Player.HurtingEventArgs ev)
         {
             if (Config.Debug)
                 Log.Info($"[OnPlayerHurting] {ev.Attacker?.Nickname ?? "Unknown"} attacked {ev.Player.Nickname} for {ev.Amount} damage.");
 
-            // Сформируем подробности
             var data = new Dictionary<string, string>
             {
                 ["DamageAmount"] = ev.Amount.ToString("F1"),
@@ -217,7 +235,6 @@ namespace Tesla_General
                 ["VictimIp"] = ev.Player.IPAddress
             };
 
-            // Если после удара жизней <= 0, это будет Kill
             float newHealth = ev.Player.Health - ev.Amount;
             if (newHealth <= 0)
                 EventCollector.AddPlayerEvent("Kill", ev.Attacker?.Nickname ?? "Unknown", ev.Player.Nickname, data);
@@ -380,7 +397,8 @@ namespace Tesla_General
             EventCollector.AddSystemEvent($"Round ended. LeadingTeam: {ev.LeadingTeam}");
             roundEndTime = DateTime.UtcNow;
 
-            // Принудительно сделаем «финальную» отправку
+            // RU: Принудительно отправляем события, чтобы все были учтены.
+            // EN: Force send events now so everything is included.
             ForceSendEventsNow();
         }
 
@@ -392,9 +410,6 @@ namespace Tesla_General
             EventCollector.AddSystemEvent("Server restarting");
         }
 
-        /// <summary>
-        /// Вызвать отправку данных «прямо сейчас» (например, при окончании раунда).
-        /// </summary>
         private void ForceSendEventsNow()
         {
             if (!Config.IsEnabled || string.IsNullOrWhiteSpace(Config.SecretKey))
@@ -403,7 +418,6 @@ namespace Tesla_General
             if (!EventCollector.HasEvents())
                 return;
 
-            // То же самое, что и в OnDataSendTimerElapsed
             TimeSpan? timeSinceLastMtf = null;
             if (lastMtfSpawnTime != DateTime.MinValue)
                 timeSinceLastMtf = DateTime.UtcNow - lastMtfSpawnTime;
@@ -420,18 +434,11 @@ namespace Tesla_General
             }
         }
 
-        // =======================================================================
-        //        Ниже блоки для событий смерти (Dying) и модерации
-        // =======================================================================
-
-        // ---------- Смерти (Dying) ----------
-
         private void OnTeamKillDeath(Exiled.Events.EventArgs.Player.DyingEventArgs ev)
         {
-            // ev.Killer - атакующий, ev.Player - жертва
             if (ev.Attacker == null) return;
-            if (ev.Attacker == ev.Player) return; // самоубийство - пропускаем здесь
-            if (ev.Attacker.Role.Team == ev.Player.Role.Team) // значит teamkill
+            if (ev.Attacker == ev.Player) return;
+            if (ev.Attacker.Role.Team == ev.Player.Role.Team)
             {
                 var data = new Dictionary<string, string>
                 {
@@ -454,7 +461,6 @@ namespace Tesla_General
 
         private void OnCuffKillDeath(Exiled.Events.EventArgs.Player.DyingEventArgs ev)
         {
-            // Если жертва в наручниках => "CuffKill"
             if (ev.Player.IsCuffed && ev.Attacker != null && ev.Attacker != ev.Player)
             {
                 var data = new Dictionary<string, string>
@@ -479,7 +485,6 @@ namespace Tesla_General
 
         private void OnNormalDeath(Exiled.Events.EventArgs.Player.DyingEventArgs ev)
         {
-            // Если атакер и цель разные и НЕ в одной команде => обычное убийство
             if (ev.Attacker != null && ev.Attacker != ev.Player &&
                 ev.Attacker.Role.Team != ev.Player.Role.Team && !ev.Player.IsCuffed)
             {
@@ -504,7 +509,6 @@ namespace Tesla_General
 
         private void OnSuicide(Exiled.Events.EventArgs.Player.DyingEventArgs ev)
         {
-            // Если атакер == жертва => "Suicide"
             if (ev.Attacker == ev.Player && ev.Player != null)
             {
                 var data = new Dictionary<string, string>
@@ -520,8 +524,6 @@ namespace Tesla_General
             }
         }
 
-        // ---------- Бан/разбан/кик/мут/размут ----------
-
         private void OnBanned(Exiled.Events.EventArgs.Player.BannedEventArgs ev)
         {
             var d = ev.Details;
@@ -533,18 +535,15 @@ namespace Tesla_General
                 ["BanReason"] = d.Reason ?? "No reason",
                 ["BanIssuedAt"] = d.IssuanceTime.ToString("o"),
                 ["BanExpiresAt"] = d.Expires.ToString("o"),
-
             };
 
-            // "action", "staffOrSystem", "targetPlayer", reason, extraData
-            // Обратите внимание, что "targetPlayer" тут логичнее = OriginalName/Id
+            // RU: Возможно, стоит добавить больше данных о том, кто именно банит (админ?), для полноценной картины. 
+            // EN: Possibly add more data about who actually banned the player (admin?), for a fuller picture.
             EventCollector.AddModerationEvent("Ban", d.OriginalName, d.Reason);
         }
 
-
         private void OnKicking(Exiled.Events.EventArgs.Player.KickingEventArgs ev)
         {
-            // ev.Player => кто кикает (админ?), ev.Target => кого
             if (!ev.IsAllowed) return;
 
             var issuerName = ev.Player?.Nickname ?? "Server";
@@ -573,7 +572,6 @@ namespace Tesla_General
         {
             if (!ev.IsAllowed) return;
 
-            // ev.Player => кто мьютит (админ), ev.Target => кого, ev.Reason, ev.Duration
             var issuerName = ev.Player?.Nickname ?? "Server";
             var issuerId = ev.Player?.UserId ?? "Server";
             var issuerIp = ev.Player?.IPAddress ?? "Unknown";
@@ -591,7 +589,6 @@ namespace Tesla_General
                 ["MutedPlayer"] = targetName,
                 ["MutedId"] = targetId,
                 ["MutedIp"] = targetIp,
-
             };
 
             EventCollector.AddModerationEvent("Mute", issuerName, targetName);
@@ -601,7 +598,6 @@ namespace Tesla_General
         {
             if (!ev.IsAllowed) return;
 
-            // ev.Player => админ, ev.Target => кого размьютили
             var issuerName = ev.Player?.Nickname ?? "Server";
             var issuerId = ev.Player?.UserId ?? "Server";
             var issuerIp = ev.Player?.IPAddress ?? "Unknown";
@@ -624,13 +620,10 @@ namespace Tesla_General
             EventCollector.AddModerationEvent("Unmute", issuerName, targetName, "Mute revoked", extra);
         }
 
-        // ---------- Админ-чат (SendingRemoteAdminChatMessage) ----------
-
         private void OnSendingAdminChatMessage(Exiled.Events.EventArgs.Player.SendingAdminChatMessageEventsArgs ev)
         {
             if (!ev.IsAllowed) return;
 
-            // ev.Sender => кто пишет, ev.Message => сообщение, ev.Channel => текстовый или голосовой
             var extra = new Dictionary<string, string>
             {
                 ["SenderName"] = ev.Player.Nickname,
@@ -639,14 +632,13 @@ namespace Tesla_General
                 ["Message"] = ev.Message
             };
 
+            // RU: Отмечаем это как админское чат-сообщение для более простой фильтрации в будущем. 
+            // EN: Mark this as an admin chat message for easier future filtering.
             EventCollector.AddModerationEvent("AdminChat", ev.Player.Nickname, null, $"Msg={ev.Message}", extra);
         }
 
-        // ---------- Локальные репорты ----------
-
         private void OnLocalReporting(Exiled.Events.EventArgs.Server.LocalReportingEventArgs ev)
         {
-            // ev.IsAllowed, ev.Player (кто репортит), ev.Target (кого), ev.Reason
             if (!ev.IsAllowed) return;
 
             var reporterName = ev.Player?.Nickname ?? "Unknown";
@@ -673,11 +665,8 @@ namespace Tesla_General
             EventCollector.AddModerationEvent("LocalReport", reporterName, reportedName, ev.Reason, extra);
         }
 
-        // ---------- Наручники ----------
-
         private void OnCuffing(Exiled.Events.EventArgs.Player.HandcuffingEventArgs ev)
         {
-            // ev.Player => тот, кто одевает наручники, ev.Target => кому
             var data = new Dictionary<string, string>
             {
                 ["CufferName"] = ev.Player.Nickname,
@@ -698,7 +687,6 @@ namespace Tesla_General
 
         private void OnUncuffed(Exiled.Events.EventArgs.Player.RemovedHandcuffsEventArgs ev)
         {
-            // ev.Player => кто снимает, ev.Target => с кого снимают
             var data = new Dictionary<string, string>
             {
                 ["UncufferName"] = ev.Player.Nickname,
@@ -717,20 +705,15 @@ namespace Tesla_General
             EventCollector.AddPlayerEvent("Uncuff", ev.Player.Nickname, ev.Target.Nickname, data);
         }
 
-        // ---------- Анонсы входа Хаоса / НТФ ----------
-
         private void OnChaosEnter(AnnouncingChaosEntranceEventArgs ev)
         {
-            // System event (можно указать число заспавнившихся, но Exiled даёт только факт + кол-во?)
             EventCollector.AddSystemEvent("Chaos is entering the facility");
         }
 
         private void OnNtfEnter(AnnouncingNtfEntranceEventArgs ev)
         {
-            // Ev содержит UnitName, UnitNumber, UnitEnding...
             var msg = $"NTF is entering the facility (UnitName={ev.UnitName}, UnitNumber={ev.UnitNumber}, UnitEnding={ev.Wave})";
             EventCollector.AddSystemEvent(msg);
         }
     }
 }
-

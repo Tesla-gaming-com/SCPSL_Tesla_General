@@ -5,18 +5,24 @@ using Exiled.API.Features;
 namespace Tesla_General
 {
     /// <summary>
-    /// Сбор и хранение событий, произошедших на сервере.
+    /// RU: Центральное хранилище (коллекция) игровых событий. Служит буфером между «сырыми» событиями Exiled и последующей
+    ///     отправкой агрегированного JSON в менеджер-эндпоинт. Расширяйте методами для новых типов событий (например, unban),
+    ///     добавляйте больше полей/данных в AddPlayerEvent, AddModerationEvent и др.
+    ///     Также можно предусмотреть фильтрацию, систему приоритетов событий и так далее.
+    /// EN: Central storage for game events. Acts as a buffer between raw Exiled callbacks and subsequent JSON dispatch
+    ///     to the manager-endpoint. Extend with new methods for new event types (e.g. unban), add more fields/data in
+    ///     AddPlayerEvent, AddModerationEvent, etc. You can also introduce filtering, event priority systems, etc.
     /// </summary>
     public static class EventCollector
     {
         private static readonly List<GameEvent> Events = new List<GameEvent>();
 
-        // Время последнего добавленного события
         private static DateTime _lastEventTime = DateTime.MinValue;
         public static DateTime LastEventTime => _lastEventTime;
 
         /// <summary>
-        /// Добавить «PlayerAction» (упрощённая версия, без дополнительных данных).
+        /// RU: Добавляет событие игрока с минимальным набором параметров (action, playerName, targetName).
+        /// EN: Adds a player event with minimal parameters (action, playerName, targetName).
         /// </summary>
         public static void AddPlayerEvent(string action, string playerName, string targetName = null)
         {
@@ -24,7 +30,8 @@ namespace Tesla_General
         }
 
         /// <summary>
-        /// Добавить «PlayerAction» с дополнительными данными (роль, IP, UserId и прочее).
+        /// RU: Добавляет событие игрока с дополнительными данными (Dictionary). 
+        /// EN: Adds a player event with additional data (Dictionary).
         /// </summary>
         public static void AddPlayerEvent(string action, string playerName, string targetName, Dictionary<string, string> extraData)
         {
@@ -53,7 +60,8 @@ namespace Tesla_General
         }
 
         /// <summary>
-        /// Добавить «SystemEvent».
+        /// RU: Добавляет системное событие (например, запуск раунда, запуск вархеда и т.д.).
+        /// EN: Adds a system event (e.g., round start, warhead start, etc.).
         /// </summary>
         public static void AddSystemEvent(string description)
         {
@@ -73,7 +81,10 @@ namespace Tesla_General
         }
 
         /// <summary>
-        /// Добавить «ModerationEvent» (упрощённая версия, без дополнительных данных).
+        /// RU: Добавляет событие модерации (ban/kick/mute/и т.п.). 
+        ///     Можно расширять подхватом большего количества данных (например, продолжительность, IP, привилегии, и т.д.).
+        /// EN: Adds a moderation event (ban/kick/mute/etc.). 
+        ///     Can be extended to capture more data (e.g., duration, IP, privileges, etc.).
         /// </summary>
         public static void AddModerationEvent(string action, string staffOrSystem, string targetPlayer, string reason = null)
         {
@@ -81,7 +92,8 @@ namespace Tesla_General
         }
 
         /// <summary>
-        /// Добавить «ModerationEvent» с дополнительными данными.
+        /// RU: Добавляет событие модерации с дополнительными данными.
+        /// EN: Adds a moderation event with additional data.
         /// </summary>
         public static void AddModerationEvent(string action, string staffOrSystem, string targetPlayer, string reason, Dictionary<string, string> extraData)
         {
@@ -95,16 +107,15 @@ namespace Tesla_General
 
             var ev = new GameEvent
             {
-                EventType = "Moderation",  // Позволяет отличать эти логи от обычных
-                Description = action,      // например: "Ban", "Kick", "Mute", "RA_Command", и т.д.
-                PlayerName = staffOrSystem, // кто выполнил действие (админ, система)
-                TargetName = targetPlayer,  // над кем совершается действие
+                EventType = "Moderation",
+                Description = action,
+                PlayerName = staffOrSystem,
+                TargetName = targetPlayer,
                 Timestamp = DateTime.UtcNow.ToString("o")
             };
 
             if (!string.IsNullOrEmpty(reason))
             {
-                // Если в extraData ещё нет "Reason", добавим его туда
                 if (extraData == null)
                     extraData = new Dictionary<string, string>();
 
@@ -120,7 +131,24 @@ namespace Tesla_General
         }
 
         /// <summary>
-        /// Получить текущий список собранных событий.
+        /// RU: Заготовка для обработки события разбана (unban). Нужно вызывать этот метод когда происходит разблокировка игрока.
+        ///     Сейчас не вызывается, так как Exiled не имеет события разбана по умолчанию, но вы можете вручную вызывать,
+        ///     если у вас есть своя логика.
+        /// EN: Stub for handling an unban event. Should be called when a player’s ban is lifted.
+        ///     Currently not triggered automatically, since Exiled does not provide an unban event by default, 
+        ///     but you can call it manually if you have custom logic.
+        /// </summary>
+        public static void AddUnbanEvent(string staffOrSystem, string targetPlayer, string reason = null, Dictionary<string, string> extraData = null)
+        {
+            // RU: Дополнительная реализация: AddModerationEvent("Unban", staffOrSystem, targetPlayer, reason, extraData);
+            // EN: Additional implementation: AddModerationEvent("Unban", staffOrSystem, targetPlayer, reason, extraData);
+
+            AddModerationEvent("Unban", staffOrSystem, targetPlayer, reason, extraData);
+        }
+
+        /// <summary>
+        /// RU: Возвращает копию списка всех накопленных событий.
+        /// EN: Returns a copy of the list of all accumulated events.
         /// </summary>
         public static List<GameEvent> GetRecentEvents()
         {
@@ -128,7 +156,8 @@ namespace Tesla_General
         }
 
         /// <summary>
-        /// Очистить список событий.
+        /// RU: Очищает накопленные события (после отправки на менеджер-эндпоинт).
+        /// EN: Clears accumulated events (after sending them to the manager-endpoint).
         /// </summary>
         public static void ClearEvents()
         {
@@ -136,7 +165,8 @@ namespace Tesla_General
         }
 
         /// <summary>
-        /// Проверка, есть ли события.
+        /// RU: Проверка наличия событий в очереди.
+        /// EN: Checks if there are any events in the queue.
         /// </summary>
         public static bool HasEvents()
         {
@@ -144,4 +174,3 @@ namespace Tesla_General
         }
     }
 }
-

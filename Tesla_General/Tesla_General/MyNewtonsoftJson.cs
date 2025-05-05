@@ -8,35 +8,23 @@ using System.Text;
 namespace Tesla_General.MyNewtonsoft
 {
     /// <summary>
-    /// Базовый класс для JSON-дерева (JValue, JObject, JArray).
+    /// RU: Минимальная реализация JSON-логики (аналог Newtonsoft) без внешних зависимостей. 
+    ///     Здесь можно доработать парсер (добавить поддержку сложных типов), 
+    ///     оптимизировать сериализацию, и т.д.
+    /// EN: Minimal JSON logic implementation (like a lightweight Newtonsoft) without external dependencies.
+    ///     You can extend the parser (add complex type support), optimize serialization, etc.
     /// </summary>
     public abstract class JToken
     {
         public JToken Parent { get; internal set; }
-
-        /// <summary>
-        /// Преобразует этот JToken (и дочерние) в строку JSON.
-        /// </summary>
         public abstract override string ToString();
-
-        /// <summary>
-        /// Преобразует текущий JToken в объект типа T (через мини-рефлексию).
-        /// </summary>
         public T ToObject<T>()
         {
             return (T)ToObject(typeof(T));
         }
-
-        /// <summary>
-        /// Внутренний метод преобразования в object.
-        /// Для JValue возвращаем значение, для JObject/JArray собираем рекурсивно.
-        /// </summary>
         internal abstract object ToObject(Type targetType);
     }
 
-    /// <summary>
-    /// Хранит простое значение (string, number, bool, null).
-    /// </summary>
     public class JValue : JToken
     {
         public object Value { get; set; }
@@ -55,20 +43,16 @@ namespace Tesla_General.MyNewtonsoft
         {
             if (Value == null)
             {
-                // Если целевой тип - nullable, вернём null, иначе - default(T).
                 if (targetType.IsValueType && Nullable.GetUnderlyingType(targetType) == null)
                 {
-                    // Нельзя вернуть null для не-nullable value type - вернём default
                     return Activator.CreateInstance(targetType);
                 }
                 return null;
             }
 
-            // Если targetType - string:
             if (targetType == typeof(string))
                 return Value.ToString();
 
-            // Если targetType - DateTime
             if (targetType == typeof(DateTime) || targetType == typeof(DateTime?))
             {
                 DateTime dt;
@@ -76,8 +60,6 @@ namespace Tesla_General.MyNewtonsoft
                     return dt;
                 return DateTime.MinValue;
             }
-
-            // Если bool
             if (targetType == typeof(bool) || targetType == typeof(bool?))
             {
                 bool b;
@@ -86,7 +68,6 @@ namespace Tesla_General.MyNewtonsoft
                 return false;
             }
 
-            // Числа
             if (IsNumericType(targetType))
             {
                 try
@@ -99,7 +80,6 @@ namespace Tesla_General.MyNewtonsoft
                 }
             }
 
-            // Если это enum
             if (targetType.IsEnum)
             {
                 try
@@ -112,7 +92,6 @@ namespace Tesla_General.MyNewtonsoft
                 }
             }
 
-            // Иначе - попробуем просто вернуть строку
             return Value.ToString();
         }
 
@@ -121,16 +100,12 @@ namespace Tesla_General.MyNewtonsoft
             t = Nullable.GetUnderlyingType(t) ?? t;
             if (t.IsPrimitive)
             {
-                // int, float, double, etc. but not bool/char
                 return t != typeof(bool) && t != typeof(char) && t != typeof(IntPtr) && t != typeof(UIntPtr);
             }
             return t == typeof(decimal);
         }
     }
 
-    /// <summary>
-    /// Массив JSON ([ ... ]).
-    /// </summary>
     public class JArray : JToken, IEnumerable<JToken>
     {
         private readonly List<JToken> _items = new List<JToken>();
@@ -172,7 +147,6 @@ namespace Tesla_General.MyNewtonsoft
 
         internal override object ToObject(Type targetType)
         {
-            // Если целевой тип - массив
             if (targetType.IsArray)
             {
                 var elementType = targetType.GetElementType();
@@ -184,7 +158,6 @@ namespace Tesla_General.MyNewtonsoft
                 return arr;
             }
 
-            // Если это List<T>
             if (targetType.IsGenericType && targetType.GetGenericTypeDefinition() == typeof(List<>))
             {
                 Type t = targetType.GetGenericArguments()[0];
@@ -197,7 +170,6 @@ namespace Tesla_General.MyNewtonsoft
                 return list;
             }
 
-            // Иначе возвращаем List<object> или аналог
             var resultList = new List<object>();
             foreach (var token in _items)
             {
@@ -207,9 +179,6 @@ namespace Tesla_General.MyNewtonsoft
         }
     }
 
-    /// <summary>
-    /// Объект JSON ({ "key": value, ... }).
-    /// </summary>
     public class JObject : JToken, IEnumerable<KeyValuePair<string, JToken>>
     {
         private readonly Dictionary<string, JToken> _properties = new Dictionary<string, JToken>(StringComparer.Ordinal);
@@ -237,7 +206,6 @@ namespace Tesla_General.MyNewtonsoft
             int i = 0;
             foreach (var kvp in _properties)
             {
-                // Явно указываем MyJsonConvert.Escape(...)
                 sb.Append("\"").Append(MyJsonConvert.Escape(kvp.Key)).Append("\":");
                 sb.Append(kvp.Value.ToString());
                 if (i < count - 1) sb.Append(",");
@@ -249,16 +217,13 @@ namespace Tesla_General.MyNewtonsoft
 
         internal override object ToObject(Type targetType)
         {
-            // Если targetType - словарь
             if (targetType.IsGenericType && targetType.GetGenericTypeDefinition() == typeof(Dictionary<,>))
             {
-                // предполагаем Dictionary<string, X>
                 var args = targetType.GetGenericArguments();
                 Type keyType = args[0];
                 Type valType = args[1];
                 if (keyType != typeof(string))
                 {
-                    // Не поддерживаем другие ключи, вернём пустой
                     return Activator.CreateInstance(targetType);
                 }
                 var dict = (IDictionary)Activator.CreateInstance(targetType);
@@ -270,12 +235,10 @@ namespace Tesla_General.MyNewtonsoft
                 return dict;
             }
 
-            // Если targetType - какой-то класс/struct
             var obj = Activator.CreateInstance(targetType);
             var props = targetType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
             var fields = targetType.GetFields(BindingFlags.Public | BindingFlags.Instance);
 
-            // маппим по имени
             foreach (var prop in props)
             {
                 if (!prop.CanWrite) continue;
@@ -308,50 +271,35 @@ namespace Tesla_General.MyNewtonsoft
         }
     }
 
-    /// <summary>
-    /// Аналог JsonConvert. Предоставляет статические методы сериализации/десериализации.
-    /// </summary>
     public static class MyJsonConvert
     {
-        /// <summary>
-        /// Сериализует объект в JSON (через рефлексию).
-        /// </summary>
         public static string SerializeObject(object obj)
         {
             var token = ObjectToJToken(obj);
             return token.ToString();
         }
 
-        /// <summary>
-        /// Десериализует JSON-строку в объект типа T.
-        /// </summary>
         public static T DeserializeObject<T>(string json)
         {
             var token = Parse(json);
             return token.ToObject<T>();
         }
 
-        /// <summary>
-        /// Создаёт JToken из C#-объекта (простого типа, массива/списка, класса/словаря, и т.д.).
-        /// </summary>
         public static JToken ObjectToJToken(object obj)
         {
             if (obj == null) return new JValue(null);
 
-            // Примитивные типы (string, number, bool, DateTime)
             Type t = obj.GetType();
             if (t == typeof(string) || t.IsPrimitive || t == typeof(decimal) || t == typeof(DateTime) || t == typeof(Guid))
             {
                 return new JValue(obj);
             }
 
-            // Если это Enum
             if (t.IsEnum)
             {
                 return new JValue(obj.ToString());
             }
 
-            // Если это массив/список
             if (typeof(IEnumerable).IsAssignableFrom(t) && t != typeof(string))
             {
                 var arr = new JArray();
@@ -362,7 +310,6 @@ namespace Tesla_General.MyNewtonsoft
                 return arr;
             }
 
-            // Если это словарь <string, something> 
             if (IsDictionaryStringKey(t))
             {
                 var jObj = new JObject();
@@ -375,11 +322,9 @@ namespace Tesla_General.MyNewtonsoft
                 return jObj;
             }
 
-            // Иначе — это класс/структ
             {
                 var jObj = new JObject();
 
-                // Поля/свойства
                 var props = t.GetProperties(BindingFlags.Public | BindingFlags.Instance);
                 foreach (var p in props)
                 {
@@ -399,9 +344,6 @@ namespace Tesla_General.MyNewtonsoft
             }
         }
 
-        /// <summary>
-        /// Разбирает JSON-строку в JToken (JObject, JArray, JValue).
-        /// </summary>
         public static JToken Parse(string json)
         {
             int index = 0;
@@ -422,11 +364,9 @@ namespace Tesla_General.MyNewtonsoft
             if (c == '[') return ParseArray(s, ref i);
             if (c == '"') return ParseString(s, ref i);
 
-            // Если начинается с цифры или минуса - это число
             if (char.IsDigit(c) || c == '-')
                 return ParseNumber(s, ref i);
 
-            // Проверяем true / false / null
             if (i + 4 <= s.Length && s.Substring(i, 4).Equals("true", StringComparison.OrdinalIgnoreCase))
             {
                 i += 4;
@@ -443,14 +383,13 @@ namespace Tesla_General.MyNewtonsoft
                 return new JValue(null);
             }
 
-            // Если ничего не подошло — парсим как строку
             return ParseString(s, ref i);
         }
 
         private static JToken ParseObject(string s, ref int i)
         {
             var obj = new JObject();
-            i++; // пропускаем '{'
+            i++;
             SkipWhiteSpace(s, ref i);
 
             bool first = true;
@@ -473,7 +412,6 @@ namespace Tesla_General.MyNewtonsoft
                 }
                 first = false;
 
-                // ключ
                 string key = ParseJsonString(s, ref i);
 
                 SkipWhiteSpace(s, ref i);
@@ -562,7 +500,6 @@ namespace Tesla_General.MyNewtonsoft
             }
             else
             {
-                // не в кавычках - считываем до запятой/пробела/скобки
                 var sb = new StringBuilder();
                 while (i < s.Length)
                 {
@@ -624,13 +561,9 @@ namespace Tesla_General.MyNewtonsoft
         {
             if (!typeof(IDictionary).IsAssignableFrom(t))
                 return false;
-            // Дополнительно проверим generic Dictionary<string, X> (необязательно).
             return true;
         }
 
-        /// <summary>
-        /// Сериализует примитив (строка, число, bool, null) в JSON-строку.
-        /// </summary>
         internal static string SerializePrimitive(object value)
         {
             if (value == null) return "null";
@@ -649,19 +582,15 @@ namespace Tesla_General.MyNewtonsoft
             }
             if (value is DateTime dt)
             {
-                // Сериализуем в ISO
                 return "\"" + Escape(dt.ToString("o", CultureInfo.InvariantCulture)) + "\"";
             }
 
-            // Числа
             Type t = value.GetType();
             if (IsNumericType(t))
             {
-                // int/float/double/decimal...
                 return Convert.ToString(value, CultureInfo.InvariantCulture);
             }
 
-            // Всё остальное — сериализуем как строку
             return "\"" + Escape(value.ToString()) + "\"";
         }
 
@@ -670,15 +599,10 @@ namespace Tesla_General.MyNewtonsoft
             t = Nullable.GetUnderlyingType(t) ?? t;
             if (t.IsPrimitive)
             {
-                // int, float, double, etc. but not bool/char
                 return t != typeof(bool) && t != typeof(char) && t != typeof(IntPtr) && t != typeof(UIntPtr);
             }
             return t == typeof(decimal);
         }
-
-        /// <summary>
-        /// Экранирует спецсимволы в строке.
-        /// </summary>
         internal static string Escape(string s)
         {
             if (s == null) return "";
