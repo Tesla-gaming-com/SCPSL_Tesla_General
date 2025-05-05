@@ -10,9 +10,7 @@ namespace Tesla_General.Networking
 {
     /// <summary>
     /// RU: HTTP-клиент, который отправляет JSON-данные (события, игроков и т.д.) на ваш менеджер-эндпоинт и обрабатывает ответ (команды/чат).
-    ///     Можно расширить, например, добавив систему ретраев, очередь запросов, прокси-поддержку, SSL-настройки и т.д.
     /// EN: HTTP client that sends JSON data (events, players, etc.) to your manager-endpoint and handles the response (commands/chat).
-    ///     It can be extended with retries, request queuing, proxy support, SSL settings, etc.
     /// </summary>
     public static class TeslaApiClient
     {
@@ -20,7 +18,6 @@ namespace Tesla_General.Networking
 
         private static readonly HttpClientHandler Handler = new HttpClientHandler();
         private static readonly HttpClient Client;
-
         private static bool _stopSendingData = false;
 
         static TeslaApiClient()
@@ -30,8 +27,7 @@ namespace Tesla_General.Networking
         }
 
         /// <summary>
-        /// RU: Разрешает повторную отправку данных, если ранее мы остановили из-за недействительного ключа.
-        /// EN: Allows sending data again, in case we previously stopped due to an invalid key.
+        /// Allow re-sending data if previously stopped due to invalid key.
         /// </summary>
         public static void AllowSendingDataAgain()
         {
@@ -39,8 +35,7 @@ namespace Tesla_General.Networking
         }
 
         /// <summary>
-        /// RU: Отправляет события в формате JSON на менеджер-эндпоинт.
-        /// EN: Sends event data in JSON format to the manager-endpoint.
+        /// Sends the events JSON to the manager-endpoint.
         /// </summary>
         public static async Task SendEventsData(string eventsJson)
         {
@@ -78,7 +73,10 @@ namespace Tesla_General.Networking
                 }
 
                 if (MainPlugin.Singleton.Config.Debug)
-                    Log.Info($"[TeslaApiClient] Manager-endpoint response: {responseContent}");
+                {
+                    Log.Info($"[TeslaApiClient] Manager-endpoint response:");
+                    Log.Info(responseContent);
+                }
 
                 ProcessManagerEndpointResponse(responseContent);
             }
@@ -89,8 +87,7 @@ namespace Tesla_General.Networking
         }
 
         /// <summary>
-        /// RU: Отправляет пользовательский запрос (команду .op) на менеджер-эндпоинт.
-        /// EN: Sends a user prompt (the .op command) to the manager-endpoint.
+        /// Sends a user prompt (the .op command) to the manager-endpoint.
         /// </summary>
         public static async Task<string> SendUserPrompt(string userPrompt)
         {
@@ -103,8 +100,6 @@ namespace Tesla_General.Networking
             if (MainPlugin.Singleton.Config.Debug)
                 Log.Info("[TeslaApiClient] Sending user prompt to manager-endpoint.");
 
-            // RU: Формируем объект для отправки.
-            // EN: Build the payload object.
             var payload = new
             {
                 secretKey = MainPlugin.Singleton.Config.SecretKey,
@@ -112,8 +107,6 @@ namespace Tesla_General.Networking
                 userPrompt = userPrompt
             };
 
-            // RU: Сериализуем в JSON.
-            // EN: Serialize to JSON.
             string requestBody = MyJsonConvert.SerializeObject(payload);
 
             try
@@ -137,7 +130,10 @@ namespace Tesla_General.Networking
                 }
 
                 if (MainPlugin.Singleton.Config.Debug)
-                    Log.Info($"[TeslaApiClient] Manager-endpoint raw response: {responseContent}");
+                {
+                    Log.Info("[TeslaApiClient] Manager-endpoint raw response:");
+                    Log.Info(responseContent);
+                }
 
                 return ProcessManagerEndpointResponse(responseContent);
             }
@@ -148,57 +144,71 @@ namespace Tesla_General.Networking
             }
         }
 
-        /// <summary>
-        /// RU: Обрабатывает ответ с менеджер-эндпоинта, парсит команды (GameAction[]) и, при необходимости, выполняет их.
-        /// EN: Processes the manager-endpoint response, parses commands (GameAction[]), and executes them if needed.
-        /// </summary>
         private static string ProcessManagerEndpointResponse(string responseJson)
         {
             if (string.IsNullOrEmpty(responseJson))
                 return "";
 
-            // RU: Десериализуем в ManagerResponse (см. класс ниже).
-            // EN: Deserialize into ManagerResponse (see class below).
-            ManagerResponse mgrResponse = null;
+            // 1) Если лямбда вернула HTML (например, <!DOCTYPE html>), мы не хотим парсить это как JSON
+            var trimmed = responseJson.TrimStart();
+            if (trimmed.StartsWith("<!DOCTYPE", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Warn("[TeslaApiClient] Manager-endpoint returned HTML instead of JSON. Skipping parse...");
+                return "";
+            }
+
+            // 2) Парсим JSON в JToken
+            JObject rootJToken;
             try
             {
-                mgrResponse = MyNewtonsoft.MyJsonConvert.DeserializeObject<ManagerResponse>(responseJson);
+                rootJToken = (JObject)MyJsonConvert.Parse(responseJson);
             }
             catch (Exception ex)
             {
-                Log.Error($"[TeslaApiClient] ManagerResponse parse error: {ex.Message}");
+                Log.Error($"[TeslaApiClient] Invalid JSON format: {ex.Message}");
                 return "";
             }
 
-            if (mgrResponse == null)
-                return "";
+            // 3) Извлекаем поля вручную
+            string keyStatus = rootJToken["keyStatus"]?.ToObject<string>() ?? "";
+            string chatReply = rootJToken["chatReply"]?.ToObject<string>() ?? "";
 
-            if (!string.IsNullOrEmpty(mgrResponse.KeyStatus) &&
-                mgrResponse.KeyStatus.Equals("invalid", StringComparison.OrdinalIgnoreCase))
+            // 4) Извлекаем commands
+            JToken commandsToken = rootJToken["commands"];
+            GameAction[] commands = Array.Empty<GameAction>();
+            if (commandsToken is JArray arr)
+            {
+                try
+                {
+                    commands = arr.ToObject<GameAction[]>();
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"[TeslaApiClient] ManagerResponse parse error (commands array): {ex.Message}");
+                }
+            }
+            else
+            {
+                if (MainPlugin.Singleton.Config.Debug)
+                    Log.Warn("[TeslaApiClient] 'commands' is missing or not an array in the manager-endpoint response.");
+            }
+
+            // 5) Если ключ недействителен
+            if (!string.IsNullOrEmpty(keyStatus) && keyStatus.Equals("invalid", StringComparison.OrdinalIgnoreCase))
             {
                 _stopSendingData = true;
                 Log.Error("[TeslaApiClient] The manager-endpoint reported that our secret key is invalid. Stopping data sends.");
             }
 
-            // RU: Если есть команды, выполняем их.
-            // EN: If commands are present, we process them.
-            if (mgrResponse.Commands != null && mgrResponse.Commands.Length > 0)
+            // 6) Выполняем команды, если есть
+            if (commands.Length > 0)
             {
-                TeslaCommandProcessor.ProcessActions(mgrResponse.Commands);
+                TeslaCommandProcessor.ProcessActions(commands);
             }
 
-            return mgrResponse.ChatReply ?? "";
+            // 7) Возвращаем chatReply (используется в .op команде)
+            return chatReply;
         }
-    }
-
-    /// <summary>
-    /// RU: Модель ответа менеджера-эндпоинта (keyStatus, chatReply, commands).
-    /// EN: Model for the manager-endpoint response (keyStatus, chatReply, commands).
-    /// </summary>
-    internal class ManagerResponse
-    {
-        public string KeyStatus { get; set; }
-        public string ChatReply { get; set; }
-        public GameAction[] Commands { get; set; }
     }
 }

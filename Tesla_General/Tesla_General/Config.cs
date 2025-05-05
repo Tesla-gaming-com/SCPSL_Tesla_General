@@ -26,6 +26,6 @@ namespace Tesla_General
         /// RU: Секретный ключ, необходимый для идентификации при отправке данных на менеджер-эндпоинт.
         /// EN: Secret key for authentication when sending data to the manager-endpoint.
         /// </summary>
-        public string SecretKey { get; set; } = "";
+        public string SecretKey { get; set; } = "tok_svJRL-o7ECH9wlHmzgfJgfV29mJagwK7";
     }
 }
